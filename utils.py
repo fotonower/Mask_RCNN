@@ -16,7 +16,7 @@ import tensorflow as tf
 import scipy.misc
 import skimage.color
 import skimage.io
-if sys.ver_info[0] == 3 :
+if sys.version_info[0] == 3 :
     import urllib.request as urllib
 else : 
     import urllib    
