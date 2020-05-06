@@ -16,6 +16,10 @@ import tensorflow as tf
 import scipy.misc
 import skimage.color
 import skimage.io
+import skimage.transform
+from distutils.version import LooseVersion
+from PIL import Image
+import warnings
 if sys.version_info[0] == 3 :
     import urllib.request as urllib
 else : 
@@ -384,6 +388,8 @@ class Dataset(object):
         return mask, class_ids
 
 
+
+
 def resize_image(image, min_dim=None, max_dim=None, padding=False):
     """
     Resizes an image keeping the aspect ratio.
@@ -434,44 +440,78 @@ def resize_image(image, min_dim=None, max_dim=None, padding=False):
         window = (top_pad, left_pad, h + top_pad, w + left_pad)
     return image, window, scale, padding
 
+###  gao : here is many modification related to some update of the version scipy , the old code works with scipy <= 1.2.2 , this update work with the scipy version >= 1.3.0
+###  the output of mask is not in the format int with value [0,1] , not it is a numpy.array with a format bool
 
-def resize_mask(mask, scale, padding):
+
+def resize(image, output_shape, order=1, mode='constant', cval=0, clip=True,
+           preserve_range=False, anti_aliasing=False, anti_aliasing_sigma=None):
+    """A wrapper for Scikit-Image resize().
+    Scikit-Image generates warnings on every call to resize() if it doesn't
+    receive the right parameters. The right parameters depend on the version
+    of skimage. This solves the problem by using different parameters per
+    version. And it provides a central place to control resizing defaults.
+    """
+    if LooseVersion(skimage.__version__) >= LooseVersion("0.14"):
+        # New in 0.14: anti_aliasing. Default it to False for backward
+        # compatibility with skimage 0.13.
+        return skimage.transform.resize(
+            image, output_shape,
+            order=order, mode=mode, cval=cval, clip=clip,
+            preserve_range=preserve_range, anti_aliasing=anti_aliasing,
+            anti_aliasing_sigma=anti_aliasing_sigma)
+    else:
+        return skimage.transform.resize(
+            image, output_shape,
+            order=order, mode=mode, cval=cval, clip=clip,
+            preserve_range=preserve_range)
+
+
+
+
+def resize_mask(mask, scale, padding, crop=None):
     """Resizes a mask using the given scale and padding.
     Typically, you get the scale and padding from resize_image() to
     ensure both, the image and the mask, are resized consistently.
-
     scale: mask scaling factor
     padding: Padding to add to the mask in the form
             [(top, bottom), (left, right), (0, 0)]
     """
-    h, w = mask.shape[:2]
-    mask = scipy.ndimage.zoom(mask, zoom=[scale, scale, 1], order=0)
-    mask = np.pad(mask, padding, mode='constant', constant_values=0)
+    # Suppress warning from scipy 0.13.0, the output shape of zoom() is
+    # calculated with round() instead of int()
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        mask = scipy.ndimage.zoom(mask, zoom=[scale, scale, 1], order=0)
+    if crop is not None:
+        y, x, h, w = crop
+        mask = mask[y:y + h, x:x + w]
+    else:
+        mask = np.pad(mask, padding, mode='constant', constant_values=0)
     return mask
 
 
 def minimize_mask(bbox, mask, mini_shape):
-    """Resize masks to a smaller version to cut memory load.
-    Mini-masks can then resized back to image scale using expand_masks()
-
+    """Resize masks to a smaller version to reduce memory load.
+    Mini-masks can be resized back to image scale using expand_masks()
     See inspect_data.ipynb notebook for more details.
     """
     mini_mask = np.zeros(mini_shape + (mask.shape[-1],), dtype=bool)
     for i in range(mask.shape[-1]):
-        m = mask[:, :, i]
+        # Pick slice and cast to bool in case load_mask() returned wrong dtype
+        m = mask[:, :, i].astype(bool)
         y1, x1, y2, x2 = bbox[i][:4]
         m = m[y1:y2, x1:x2]
         if m.size == 0:
             raise Exception("Invalid bounding box with area of zero")
-        m = scipy.misc.imresize(m.astype(float), mini_shape, interp='bilinear')
-        mini_mask[:, :, i] = np.where(m >= 128, 1, 0)
+        # Resize with bilinear interpolation
+        m = resize(m, mini_shape)
+        mini_mask[:, :, i] = np.around(m).astype(np.bool)
     return mini_mask
 
 
 def expand_mask(bbox, mini_mask, image_shape):
     """Resizes mini masks back to image size. Reverses the change
     of minimize_mask().
-
     See inspect_data.ipynb notebook for more details.
     """
     mask = np.zeros(image_shape[:2] + (mini_mask.shape[-1],), dtype=bool)
@@ -480,8 +520,9 @@ def expand_mask(bbox, mini_mask, image_shape):
         y1, x1, y2, x2 = bbox[i][:4]
         h = y2 - y1
         w = x2 - x1
-        m = scipy.misc.imresize(m.astype(float), (h, w), interp='bilinear')
-        mask[y1:y2, x1:x2, i] = np.where(m >= 128, 1, 0)
+        # Resize with bilinear interpolation
+        m = resize(m, (h, w))
+        mask[y1:y2, x1:x2, i] = np.around(m).astype(np.bool)
     return mask
 
 
@@ -491,21 +532,19 @@ def mold_mask(mask, config):
 
 
 def unmold_mask(mask, bbox, image_shape):
-    """Converts a mask generated by the neural network into a format similar
-    to it's original shape.
+    """Converts a mask generated by the neural network to a format similar
+    to its original shape.
     mask: [height, width] of type float. A small, typically 28x28 mask.
     bbox: [y1, x1, y2, x2]. The box to fit the mask in.
-
     Returns a binary mask with the same size as the original image.
     """
     threshold = 0.5
     y1, x1, y2, x2 = bbox
-    mask = scipy.misc.imresize(
-        mask, (y2 - y1, x2 - x1), interp='bilinear').astype(np.float32) / 255.0
-    mask = np.where(mask >= threshold, 1, 0).astype(np.uint8)
+    mask = resize(mask, (y2 - y1, x2 - x1))
+    mask = np.where(mask >= threshold, 1, 0).astype(np.bool)
 
     # Put the mask in the right location.
-    full_mask = np.zeros(image_shape[:2], dtype=np.uint8)
+    full_mask = np.zeros(image_shape[:2], dtype=np.bool)
     full_mask[y1:y2, x1:x2] = mask
     return full_mask
 
