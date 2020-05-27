@@ -2097,7 +2097,11 @@ class MaskRCNN():
                 continue
             layer = self.keras_model.get_layer(name)
             self.keras_model.metrics_names.append(name)
-            self.keras_model.metrics_tensors.append(tf.reduce_mean(
+            if float(keras.__version__[0:3]) >= 2.3 :
+                self.keras_model.add_metric(tf.reduce_mean(
+                layer.output, keep_dims=True), name)
+            else :
+                self.keras_model.metrics_tensors.append(tf.reduce_mean(
                 layer.output, keep_dims=True))
 
     def set_trainable(self, layer_regex, keras_model=None, indent=0, verbose=1):
