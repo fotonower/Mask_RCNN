@@ -12,7 +12,11 @@ import os
 import math
 import random
 import numpy as np
-import tensorflow as tf
+import tensorflow as tff
+if tff.__version__[0] == "2" :
+    import tensorflow.compat.v1 as tf
+else :
+    import tensorflow as tf
 import scipy.misc
 import skimage.color
 import skimage.io
