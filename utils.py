@@ -17,7 +17,7 @@ if tff.__version__[0] == "2" :
     import tensorflow.compat.v1 as tf
 else :
     import tensorflow as tf
-import scipy.misc
+# import scipy.misc
 import skimage.color
 import skimage.io
 import skimage.transform
@@ -429,8 +429,7 @@ def resize_image(image, min_dim=None, max_dim=None, padding=False):
             scale = max_dim / image_max
     # Resize image and mask
     if scale != 1:
-        image = scipy.misc.imresize(
-            image, (round(h * scale), round(w * scale)))
+        image = resize(image, (round(h * scale), round(w * scale)), preserve_range=True)
     # Need padding?
     if padding:
         # Get new height and width
