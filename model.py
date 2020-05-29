@@ -19,7 +19,7 @@ import re
 import logging
 from collections import OrderedDict
 import numpy as np
-import scipy.misc
+# import scipy.misc
 import tensorflow.compat.v1 as tf
 import keras
 import keras.backend as K
