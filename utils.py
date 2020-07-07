@@ -17,7 +17,7 @@ if tff.__version__[0] == "2" :
     import tensorflow.compat.v1 as tf
 else :
     import tensorflow as tf
-# import scipy.misc
+import scipy
 import skimage.color
 import skimage.io
 import skimage.transform
